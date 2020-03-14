@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+message RegisterNodeRequest {
+	required int32 version = 1;
+}
+
+message RegisterNodeResponse {
+	required int32 code = 1;
+}
+
+message BootstrapRequest {
+	required string url = 1;
+	required string commit = 2;
+	required string opt = 3;
+}
+
+message BoostrapResponse {
+	required int32 code = 1;
+	optional string message = 2;
+}

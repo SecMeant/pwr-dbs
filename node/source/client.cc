@@ -5,6 +5,8 @@
 
 #include <fmt/format.h>
 
+#include "delegate.pb.h"
+
 using namespace boost;
 
 namespace http = beast::http;
@@ -30,10 +32,14 @@ int main(int argc, char **argv)
 
 	asio::connect(ws.next_layer(), std::cbegin(resolve_res), std::cend(resolve_res));
 
-	std::string msg = "Hello from cpp!";
+	RegisterNodeRequest req;
+	req.set_version(1);
+
+	std::string msg;
 
 	try {
 		ws.handshake(host, resource);
+		req.SerializeToString(&msg);
 		ws.write(asio::buffer(msg));
 
 	} catch (const std::exception &e) {
@@ -41,9 +47,12 @@ int main(int argc, char **argv)
 		return -2;
 	}
 
+	RegisterNodeResponse res;
+
 	beast::flat_buffer buffer;
 	ws.read(buffer);
-	print("Msg: {}\n", (char*)buffer.data().data());
+	res.ParseFromArray(buffer.cdata().data(), buffer.size());
+	print("Response: {}\n", res.code());
 
 	ws.close(websocket::close_code::normal);
 

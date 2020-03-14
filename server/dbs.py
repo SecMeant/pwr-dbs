@@ -7,6 +7,8 @@ from flask import Flask, request, send_from_directory
 
 from pathlib import Path
 
+import delegate_pb2
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
 
@@ -54,14 +56,15 @@ def add_item(item):
 def handle_ws():
   if request.environ.get('wsgi.websocket'):
     ws = request.environ['wsgi.websocket']
-    while True:
-      message = ws.receive()
+    message = ws.receive()
 
-      if not message:
-        break
+    req = delegate_pb2.RegisterNodeRequest()
+    req.ParseFromString(message.encode('utf-8')) 
+    print('Request:\n\tVersion: {}\n'.format(req.version))
 
-      print('Got message: {}\n'.format(message))
-      ws.send('Hello from python!')
+    res = delegate_pb2.RegisterNodeResponse()
+    res.code = 0
+    ws.send(res.SerializeToString())
 
   return ''
 
@@ -71,16 +74,17 @@ def restore():
   global items
   print('Restoring saved data')
   try:
-    with open('save', 'rb') as f:
+    with open(save_fn, 'r') as f:
       items = f.readlines()
   except FileNotFoundError:
     print('Could not find data file.')
+    return
   print('Restored')
 
 def safe_exit():
   global items
-  with open(save_fn, 'wb') as f:
-    f.writelines(items)
+  with open(save_fn, 'w') as f:
+    f.write('\n'.join(items))
 
 if __name__ == '__main__':
   try:
