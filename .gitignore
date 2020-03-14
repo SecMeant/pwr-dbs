@@ -1,0 +1,4 @@
+__pycache__/
+server/state
+node/build
+node/compile_commands.json
