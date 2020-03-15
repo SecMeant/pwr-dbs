@@ -4,8 +4,14 @@
 #include <boost/asio/ip/tcp.hpp>
 
 #include <fmt/format.h>
+#include <cstdlib>
+#include <string_view>
+
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "delegate.pb.h"
+#include "process.h"
 
 using namespace boost;
 
@@ -14,6 +20,20 @@ namespace websocket = beast::websocket;
 using tcp = asio::ip::tcp;
 
 using fmt::print;
+
+int repo_clone(const char *repo_name)
+{
+	const char *env = "/usr/bin/env";
+	const char *argv[] = {env, "git", "clone", repo_name, nullptr};
+
+	process proc(env, argv);
+
+	if (proc.pid() == process::INVALID_PID)
+		return -1;
+
+	
+	return 0;
+}
 
 int main(int argc, char **argv)
 {
@@ -47,12 +67,30 @@ int main(int argc, char **argv)
 		return -2;
 	}
 
-	RegisterNodeResponse res;
 
 	beast::flat_buffer buffer;
 	ws.read(buffer);
+
+	RegisterNodeResponse res;
 	res.ParseFromArray(buffer.cdata().data(), buffer.size());
+	buffer.clear();
+
 	print("Response: {}\n", res.code());
+
+
+	ws.read(buffer);
+
+	BootstrapRequest bootstrap_request;
+	bootstrap_request.ParseFromArray(buffer.cdata().data(), buffer.size());
+
+	const auto& url = bootstrap_request.url();
+	auto name_begin = url.rfind("/");
+	auto name_end = url.find(".git", name_begin);
+
+	std::string repo_name(url, name_begin, name_end);
+
+	if (repo_clone(url.c_str()))
+		return -1;
 
 	ws.close(websocket::close_code::normal);
 
