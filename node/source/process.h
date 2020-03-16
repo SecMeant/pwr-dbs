@@ -6,21 +6,25 @@
 #include <utility>
 #include <cstdarg>
 
+#include <fmt/format.h>
+
 class process
 {
 public:
 	static constexpr pid_t INVALID_PID = -1;
+	static constexpr auto env = "/usr/bin/env";
 
 	struct process_arg
 	{
 		const char *program_name;
 		const char **argv;
+		const char *cwd;
 	};
 
 	inline
-	process(const char *program_name, const char **argv) noexcept
+	process(const char *program_name, const char **argv, const char *cwd = nullptr) noexcept
 	{
-		struct process_info proc = create_process(program_name, argv);
+		struct process_info proc = create_process(program_name, argv, cwd);
 
 		this->m_pid = proc.pid;
 		this->m_stdin = proc.stdin;
@@ -61,7 +65,7 @@ public:
 	{
 		this->close_checked();
 
-		struct process_info proc = create_process(pa.program_name, pa.argv);
+		struct process_info proc = create_process(pa.program_name, pa.argv, pa.cwd);
 
 		this->m_pid = proc.pid;
 		this->m_stdin = proc.stdin;
@@ -150,8 +154,14 @@ private:
 	};
 
 	static inline struct process_info
-	create_process(const char *program_name, const char **argv) noexcept
+	create_process(const char *program_name, const char **argv, const char *cwd) noexcept
 	{
+		auto cwd_ = cwd ? cwd : "./";
+		fmt::print("Creating new process: {} at {}\nargv:", program_name, cwd_);
+		for (auto arg = argv; *arg != nullptr; ++arg) {
+			fmt::print("\t{}\n", *arg);
+		}
+
 		struct process_info p;
 		int new_stdin[2], new_stdout[2], new_stderr[2];
 
@@ -171,6 +181,9 @@ private:
 		p.pid = fork();
 
 		if (p.pid == 0) {
+			if (cwd && chdir(cwd))
+				exit(1);
+
 			dup2(new_stdin[0], STDIN_FILENO);
 			close(new_stdin[1]);
 

@@ -31,7 +31,10 @@ setTimeout(checkJS, 1000);
 
 """
 
+save_fn = 'state'
+
 items = []
+nodes = []
 
 @app.route("/")
 def root():
@@ -52,23 +55,63 @@ def add_item(item):
     items.append(item)
   return "<h1>Items</h1></br>" + "</br>".join(items)
 
+@app.route("/clone/<repo>")
+def request_clone(repo):
+  global nodes
+  for node in nodes:
+    req = delegate_pb2.BootstrapRequest()
+    req.url = 'https://github.com/secmeant/sets'
+    req.commit = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
+    req.opt = ''
+    node.send(req.SerializeToString())
+
+    msg = node.receive()
+
+    if not msg:
+      continue
+
+    resp = delegate_pb2.BootstrapResponse()
+    resp.ParseFromString(msg.encode('utf-8'))
+    print('Status: {}\nMessage: {}\n'.format(resp.code, resp.message))
+  return ''
+
 @app.route('/ws')
-def handle_ws():
+def handle_node_register():
+  global nodes
   if request.environ.get('wsgi.websocket'):
     ws = request.environ['wsgi.websocket']
     message = ws.receive()
+
+    if not message:
+      return
 
     req = delegate_pb2.RegisterNodeRequest()
     req.ParseFromString(message.encode('utf-8')) 
     print('Request:\n\tVersion: {}\n'.format(req.version))
 
+    if req.version == 1:
+      nodes.append(ws)
+
     res = delegate_pb2.RegisterNodeResponse()
     res.code = 0
     ws.send(res.SerializeToString())
 
-  return ''
+    req = delegate_pb2.BootstrapRequest()
+    req.url = 'https://github.com/secmeant/sets'
+    req.rev = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
+    req.opt = ''
+    ws.send(req.SerializeToString())
 
-save_fn = 'state'
+    msg = ws.receive()
+
+    if not msg:
+      return ''
+
+    resp = delegate_pb2.BootstrapResponse()
+    resp.ParseFromString(msg.encode('utf-8'))
+    print(f'Status: {resp.code}\n')
+
+  return ''
 
 def restore():
   global items

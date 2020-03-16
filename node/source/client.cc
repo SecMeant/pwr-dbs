@@ -9,6 +9,7 @@
 
 #include <sys/types.h>
 #include <unistd.h>
+#include <filesystem>
 
 #include "delegate.pb.h"
 #include "process.h"
@@ -19,26 +20,125 @@ namespace http = beast::http;
 namespace websocket = beast::websocket;
 using tcp = asio::ip::tcp;
 
+namespace fs = std::filesystem;
+
 using fmt::print;
 
-int repo_clone(const char *repo_name)
+static std::string current_commit(const char *cwd) noexcept
 {
-	const char *env = "/usr/bin/env";
-	const char *argv[] = {env, "git", "clone", repo_name, nullptr};
-
-	process proc(env, argv);
+	constexpr size_t hash_size = 40;
+	std::string hash;
+	
+	const char *argv[] = {process::env, "git", "rev-parse", "HEAD", nullptr};
+	process proc(process::env, argv, cwd);
 
 	if (proc.pid() == process::INVALID_PID)
-		return -1;
+		return hash;
 
-	
-	return 0;
+	int status;
+	proc.waitpid(&status);
+
+	if (status)
+		return hash;
+
+	hash = std::string(hash_size, 0);
+	status = proc.read(hash.data(), hash_size);
+
+	fmt::print("Status: {}\n Hash: {}\n", status, hash);
+
+	if (status != hash_size)
+		hash.resize(0);
+
+	return hash;
+}
+
+static fs::path repo_outdir(std::string_view name, std::string_view rev)
+{
+	// TODO Delete this slow garbage 1/2
+	return fs::path(name) / fs::path(rev);
+}
+
+static bool repo_ready(const char *outdir)
+{
+	// TODO Make this check work better
+	// Directory existance != (good clone && good checkout)
+	return fs::is_directory(outdir);
+}
+
+static BootstrapResponse_Code repo_clone(const char *repo_url, const char *outdir, const char *commit = nullptr) noexcept
+{
+	if (repo_ready(outdir)) {
+		fmt::print("{} already exists at {}. Using existing instead.\n", repo_url, outdir);
+		return BootstrapResponse::OK;
+	}
+
+	const char *clone_argv[] = {process::env, "git", "clone", repo_url, outdir, nullptr};
+
+	int status;
+	process proc(process::env, clone_argv);
+
+	if (proc.pid() == process::INVALID_PID)
+		return BootstrapResponse::EURL;
+
+	proc.waitpid(&status);
+
+	if (status)
+		return BootstrapResponse::EURL;
+
+	if (!commit)
+		return BootstrapResponse::OK;
+
+	const char *checkout_argv[] = {process::env, "git", "checkout", commit, nullptr};
+
+	proc = process::process_arg{process::env, checkout_argv, outdir};
+
+	if (proc.pid() == process::INVALID_PID)
+		return BootstrapResponse::EREV;
+
+	proc.waitpid(&status);
+
+	if (status)
+		return BootstrapResponse::EREV;
+
+	return BootstrapResponse::OK;
+}
+
+static BootstrapResponse handle_project_init(const BootstrapRequest &request) noexcept
+{
+	BootstrapResponse ret; ret.set_code(BootstrapResponse::OK);
+	const auto& url = request.url();
+	const auto& rev = request.rev();
+
+	auto name_begin = url.rfind("/");
+
+	if (name_begin == std::string::npos) {
+		ret.set_code(BootstrapResponse::EURL);
+		return ret;
+	}
+
+	++name_begin; // skip '/'
+	auto name_end = url.find(".git", name_begin); // npos is ok
+
+	// TODO Delete this slow garbage 2/2
+	std::string repo_name(url, name_begin, name_end);
+	fs::path outdir = repo_outdir(repo_name, rev);
+
+	BootstrapResponse_Code ret_code = repo_clone(url.c_str(), outdir.c_str(), rev.c_str());
+
+	if (ret_code != BootstrapResponse::OK) {
+		ret.set_code(ret_code);
+		return ret;
+	}
+
+	fmt::print("{} initialized successfully with HEAD at: {}\n", repo_name, rev);
+
+	return ret;
 }
 
 int main(int argc, char **argv)
 {
 	if (argc != 4)
-		return -1;
+		return 1;
 
 	const auto host = argv[1];
 	const auto port = argv[2];
@@ -52,47 +152,42 @@ int main(int argc, char **argv)
 
 	asio::connect(ws.next_layer(), std::cbegin(resolve_res), std::cend(resolve_res));
 
-	RegisterNodeRequest req;
-	req.set_version(1);
+	RegisterNodeRequest register_request;
+	register_request.set_version(1);
 
-	std::string msg;
+	std::string message_buffer;
+	beast::flat_buffer io_buffer;
 
 	try {
 		ws.handshake(host, resource);
-		req.SerializeToString(&msg);
-		ws.write(asio::buffer(msg));
+
+		// Node registration
+		register_request.SerializeToString(&message_buffer);
+		ws.write(asio::buffer(message_buffer));
+
+		// Registration response
+		ws.read(io_buffer);
+		RegisterNodeResponse res;
+		res.ParseFromArray(io_buffer.cdata().data(), io_buffer.size());
+
+		if (res.code() != 0)
+			return 3;
+
+		// Wait for BootstrapRequest and parse
+		ws.read(io_buffer);
+		BootstrapRequest bootstrap_request;
+		bootstrap_request.ParseFromArray(io_buffer.cdata().data(), io_buffer.size());
+
+		BootstrapResponse bootstrap_response = handle_project_init(bootstrap_request);
+		bootstrap_response.SerializeToString(&message_buffer);
+		ws.write(asio::buffer(message_buffer));
+
+		ws.close(websocket::close_code::normal);
 
 	} catch (const std::exception &e) {
 		print("Exception: {}\n", e.what());
-		return -2;
+		return 2;
 	}
-
-
-	beast::flat_buffer buffer;
-	ws.read(buffer);
-
-	RegisterNodeResponse res;
-	res.ParseFromArray(buffer.cdata().data(), buffer.size());
-	buffer.clear();
-
-	print("Response: {}\n", res.code());
-
-
-	ws.read(buffer);
-
-	BootstrapRequest bootstrap_request;
-	bootstrap_request.ParseFromArray(buffer.cdata().data(), buffer.size());
-
-	const auto& url = bootstrap_request.url();
-	auto name_begin = url.rfind("/");
-	auto name_end = url.find(".git", name_begin);
-
-	std::string repo_name(url, name_begin, name_end);
-
-	if (repo_clone(url.c_str()))
-		return -1;
-
-	ws.close(websocket::close_code::normal);
 
 	return 0;
 }

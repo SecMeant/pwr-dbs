@@ -10,11 +10,18 @@ message RegisterNodeResponse {
 
 message BootstrapRequest {
 	required string url = 1;
-	required string commit = 2;
+	required string rev = 2;
 	required string opt = 3;
 }
 
-message BoostrapResponse {
-	required int32 code = 1;
-	optional string message = 2;
+message BootstrapResponse {
+	enum Code {
+		OK = 0;
+		EURL = 1;
+		EREV = 2;
+		ECFG = 3;
+	}
+
+	required Code code = 1;
+}
 }
