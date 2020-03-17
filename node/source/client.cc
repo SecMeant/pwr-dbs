@@ -14,6 +14,8 @@
 #include <chrono>
 #include <thread>
 
+#include <algorithm>
+
 using namespace std::chrono_literals;
 
 #include "delegate.pb.h"
@@ -59,7 +61,7 @@ static std::string current_commit(const char *cwd) noexcept
 
 static fs::path repo_outdir(std::string_view name, std::string_view rev)
 {
-	// TODO Delete this slow garbage 1/2
+	// TODO Delete this slow garbage
 	return fs::path(name) / fs::path(rev);
 }
 
@@ -108,6 +110,48 @@ static BootstrapResponse_Code repo_clone(const char *repo_url, const char *outdi
 	return BootstrapResponse::OK;
 }
 
+static int cmake_configure_project(const fs::path &project_path, std::string opt)  noexcept
+{
+	(void) opt;
+
+	int retval = 0;
+
+	// For now only one option is supported (low hanging fruit)
+	// TODO add support for more options.
+	assert(opt.find(' ') == std::string::npos);
+
+	fs::path current_path = fs::current_path();
+	fs::path build_path = fs::path(project_path) / fs::path("build");
+	fs::create_directories(build_path);
+	if (chdir(build_path.c_str()))
+		return 1;
+
+	const char *configure_argv[] = {process::env, "cmake", "..", opt.c_str(), nullptr};
+
+	int status;
+	process proc(process::env, configure_argv);
+
+	if (proc.pid() == process::INVALID_PID) {
+		fmt::print("Failed to spawn cmake process.\n");
+		retval = 2;
+		goto exit;
+	}
+
+	proc.waitpid(&status);
+
+	if (status) {
+		fmt::print("Failed to configure project with cmake.\n");
+		retval = status;
+		goto exit;
+	}
+
+	fmt::print("Project configured correctly.\n");
+
+exit:
+	chdir(current_path.c_str());
+	return retval;
+}
+
 static BootstrapResponse handle_project_init(const BootstrapRequest &request) noexcept
 {
 	BootstrapResponse ret; ret.set_code(BootstrapResponse::OK);
@@ -124,7 +168,6 @@ static BootstrapResponse handle_project_init(const BootstrapRequest &request) no
 	++name_begin; // skip '/'
 	auto name_end = url.find(".git", name_begin); // npos is ok
 
-	// TODO Delete this slow garbage 2/2
 	std::string repo_name(url, name_begin, name_end);
 	fs::path outdir = repo_outdir(repo_name, rev);
 
@@ -132,6 +175,11 @@ static BootstrapResponse handle_project_init(const BootstrapRequest &request) no
 
 	if (ret_code != BootstrapResponse::OK) {
 		ret.set_code(ret_code);
+		return ret;
+	}
+
+	if (cmake_configure_project(outdir, "-DCMAKE_BUILD_TYPE=RELEASE")) {
+		ret.set_code(BootstrapResponse::ECFG);
 		return ret;
 	}
 
