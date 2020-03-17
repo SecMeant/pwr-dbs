@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-import sys
-from geventwebsocket.handler import WebSocketHandler
-from geventwebsocket.exceptions import WebSocketError
-from gevent.pywsgi import WSGIServer
 from flask import Flask, request, send_from_directory
+from flask_uwsgi_websocket import GeventWebSocket
+
+import sys
+import threading 
+import queue
+import struct
 
 from pathlib import Path
 
@@ -11,6 +13,82 @@ import delegate_pb2
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
+websocket = GeventWebSocket(app)
+
+class Worker:
+  def __init__(self):
+    self.work_queue = queue.Queue()
+
+  def wait_for_work(self):
+    return self.work_queue.get()
+
+  def assign_work(self, project):
+    self.work_queue.put(project)
+
+class Project:
+  def __init__(self, binfo, files):
+    self.lock = threading.Lock()
+    self.bootstrap_info = binfo
+    self.files = files
+    self.objects = []
+
+  def get_file(self):
+    self.lock.acquire()
+
+    if self.files:
+      ret = self.files.pop()
+    else:
+      ret = None
+
+    self.lock.release()
+
+    return ret
+
+  def add_object(self, obj):
+    self.lock.acquire()
+    self.objects.append(obj)
+    self.lock.release()
+
+class ProjectQueue:
+  def __init__(self):
+    self.lock = threading.Lock()
+    self.projects = []
+
+  def enqueue_project(project):
+    self.lock.acquire()
+    self.projects.append(project)
+    self.lock.release()
+
+workers_lock = threading.Lock()
+workers = []
+
+def internal_register_worker(worker):
+  workers_lock.acquire()
+  workers.append(worker)
+  workers_lock.release()
+
+def internal_unregister_worker(worker):
+  workers_lock.acquire()
+  workers.remove(worker)
+  workers_lock.release()
+
+def ws_read_any(ws):
+  while True:
+    msg = ws.recv()
+    if msg:
+      return msg
+
+def ws_read_n(ws, size):
+  message = b''
+  while len(message) < size:
+    msg = ws.recv()
+    if msg:
+      message += msg
+  return message
+
+def ws_recv_protobuf(ws):
+  size = struct.unpack("<I", ws_read_n(ws, 4))
+  return ws_read_n(ws, size)
 
 index = """
 <head>
@@ -33,9 +111,6 @@ setTimeout(checkJS, 1000);
 
 save_fn = 'state'
 
-items = []
-nodes = []
-
 @app.route("/")
 def root():
   return index
@@ -57,60 +132,67 @@ def add_item(item):
 
 @app.route("/clone/<repo>")
 def request_clone(repo):
-  global nodes
-  for node in nodes:
-    req = delegate_pb2.BootstrapRequest()
-    req.url = 'https://github.com/secmeant/sets'
-    req.commit = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
-    req.opt = ''
-    node.send(req.SerializeToString())
+  req = delegate_pb2.BootstrapRequest()
+  req.url = 'https://github.com/secmeant/sets'
+  req.rev = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
+  req.opt = ''
 
-    msg = node.receive()
+  project = Project(req, ['asdf.cc'])
 
-    if not msg:
-      continue
+  workers_lock.acquire()
 
-    resp = delegate_pb2.BootstrapResponse()
-    resp.ParseFromString(msg.encode('utf-8'))
-    print('Status: {}\nMessage: {}\n'.format(resp.code, resp.message))
-  return ''
+  if not workers:
+    return 'No workers available'
 
-@app.route('/ws')
-def handle_node_register():
-  global nodes
-  if request.environ.get('wsgi.websocket'):
-    ws = request.environ['wsgi.websocket']
-    message = ws.receive()
+  workers[0].assign_work(project)
 
-    if not message:
-      return
+  workers_lock.release()
 
-    req = delegate_pb2.RegisterNodeRequest()
-    req.ParseFromString(message.encode('utf-8')) 
-    print('Request:\n\tVersion: {}\n'.format(req.version))
+  return 'Work started'
 
-    if req.version == 1:
-      nodes.append(ws)
+import time
 
-    res = delegate_pb2.RegisterNodeResponse()
-    res.code = 0
-    ws.send(res.SerializeToString())
+@websocket.route('/ws')
+def handle_node_register(ws):
+  req = delegate_pb2.RegisterNodeRequest()
+  msg = ws_read_any(ws)
+  req.ParseFromString(msg)
+  print('Request:\n\tVersion: {}\n'.format(req.version))
 
-    req = delegate_pb2.BootstrapRequest()
-    req.url = 'https://github.com/secmeant/sets'
-    req.rev = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
-    req.opt = ''
-    ws.send(req.SerializeToString())
+  resp = delegate_pb2.RegisterNodeResponse()
+  resp.code = 0
+  ws.send(resp.SerializeToString())
 
-    msg = ws.receive()
+  local_worker = Worker()
+  internal_register_worker(local_worker)
+  project = local_worker.wait_for_work()
 
-    if not msg:
-      return ''
+  #req = delegate_pb2.BootstrapRequest()
+  #req.url = 'https://github.com/secmeant/sets'
+  #req.rev = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
+  #req.opt = ''
 
-    resp = delegate_pb2.BootstrapResponse()
-    resp.ParseFromString(msg.encode('utf-8'))
-    print(f'Status: {resp.code}\n')
+  req = project.bootstrap_info
+  ws.send(req.SerializeToString())
 
+  resp = delegate_pb2.BootstrapResponse()
+  msg = ws_read_any(ws)
+  resp.ParseFromString(msg)
+  print(f'Data: {msg} Status: {resp.code}\n')
+
+  file = project.get_file()
+  compile_request = delegate_pb2.CompileRequest()
+  compile_request.files = file
+  ws.send(compile_request.SerializeToString())
+
+  msg = b''
+
+  resp = delegate_pb2.CompileResponse()
+  msg = ws_read_any(ws)
+  resp.ParseFromString(msg)
+  print(f'msg: {msg}, File: {resp.file}, error: {resp.error}, data: {resp.data}\n')
+
+  internal_unregister_worker(local_worker)
   return ''
 
 def restore():
@@ -132,8 +214,9 @@ def safe_exit():
 if __name__ == '__main__':
   try:
     restore()
-    http_server = WSGIServer(('localhost', 5000), app, handler_class=WebSocketHandler)
-    http_server.serve_forever()
+    app.run(gevent=100)
+    #http_server = WSGIServer(('localhost', 5000), app, handler_class=WebSocketHandler)
+    #http_server.serve_forever()
   except KeyboardInterrupt:
     safe_exit()
     sys.exit()

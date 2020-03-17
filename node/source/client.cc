@@ -11,6 +11,11 @@
 #include <unistd.h>
 #include <filesystem>
 
+#include <chrono>
+#include <thread>
+
+using namespace std::chrono_literals;
+
 #include "delegate.pb.h"
 #include "process.h"
 
@@ -135,6 +140,45 @@ static BootstrapResponse handle_project_init(const BootstrapRequest &request) no
 	return ret;
 }
 
+using websocket_t = websocket::stream<tcp::socket>;
+
+//template <typename T>
+//auto websocket_write(websocket_t &ws, T&& pb_message, std::string &serialize_buffer)
+//{
+//	size_t written = 0;
+//	uint32_t packet_size = pb_message.ByteSizeLong();
+//	written += ws.write(asio::buffer(&packet_size, sizeof(packet_size)));
+//	pb_message.SerializeToString(&serialize_buffer);
+//	written += ws.write(asio::buffer(serialize_buffer));
+//
+//	return written;
+//}
+//
+//template <typename T>
+//auto websocket_read_n(websocket_t &ws, void *outbuf_, size_t size, beast::flat_buffer &read_buffer)
+//{
+//	char *outbuf = (char*) outbuf_;
+//	size_t bytes_read = 0;
+//
+//	while (bytes_read < size) {
+//		ws.read(read_buffer);
+//		size_t to_read = std::min(size - bytes_read, read_buffer.size());
+//		std::copy_n(read_buffer.cdata().data(), to_read, outbuf);
+//		bytes_read += 
+//		outbuf += 
+//	}
+//}
+//
+//template <typename T>
+//auto websocket_read(websocket_t &ws, T& pb_message, beast::flat_buffer &read_buffer)
+//{
+//	uint32_t packet_size = 0;
+//	ws.read(read_buffer);
+//	std::copy_n(read_buffer.cdata().data(), 4, (void*) &packet_size);
+//	RegisterNodeResponse res;
+//	res.ParseFromArray(read_buffer.cdata().data(), read_buffer.size());
+//}
+
 int main(int argc, char **argv)
 {
 	if (argc != 4)
@@ -152,19 +196,21 @@ int main(int argc, char **argv)
 
 	asio::connect(ws.next_layer(), std::cbegin(resolve_res), std::cend(resolve_res));
 
-	RegisterNodeRequest register_request;
-	register_request.set_version(1);
-
 	std::string message_buffer;
 	beast::flat_buffer io_buffer;
+	uint32_t packet_size;
 
 	try {
 		ws.handshake(host, resource);
 
 		// Node registration
+		RegisterNodeRequest register_request;
+		register_request.set_version(1);
 		register_request.SerializeToString(&message_buffer);
 		ws.write(asio::buffer(message_buffer));
 
+
+		puts("HERE1");
 		// Registration response
 		ws.read(io_buffer);
 		RegisterNodeResponse res;
@@ -173,16 +219,41 @@ int main(int argc, char **argv)
 		if (res.code() != 0)
 			return 3;
 
+		puts("HERE2");
 		// Wait for BootstrapRequest and parse
 		ws.read(io_buffer);
 		BootstrapRequest bootstrap_request;
 		bootstrap_request.ParseFromArray(io_buffer.cdata().data(), io_buffer.size());
 
+		// Send bootstrap status
 		BootstrapResponse bootstrap_response = handle_project_init(bootstrap_request);
 		bootstrap_response.SerializeToString(&message_buffer);
 		ws.write(asio::buffer(message_buffer));
 
-		ws.close(websocket::close_code::normal);
+		if (bootstrap_response.code() != BootstrapResponse::OK) {
+			ws.close(websocket::close_code::normal);
+			return 2;
+		}
+
+		puts("HERE3");
+		// Wait for compilation request
+		ws.read(io_buffer);
+		CompileRequest compile_request;
+		compile_request.ParseFromArray(io_buffer.cdata().data(), io_buffer.size());
+
+		// HARD WORK, COMPILE
+		std::this_thread::sleep_for(1s);
+
+		puts("HERE4");
+		// Send compilation response
+		CompileResponse compile_response;
+		compile_response.set_file(compile_request.files());
+		compile_response.set_error("no error really");
+		compile_response.set_data("\x41\x42\x43\x44");
+		compile_response.SerializeToString(&message_buffer);
+		ws.write(asio::buffer(message_buffer));
+
+		puts("HERE5");
 
 	} catch (const std::exception &e) {
 		print("Exception: {}\n", e.what());

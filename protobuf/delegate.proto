@@ -24,4 +24,15 @@ message BootstrapResponse {
 
 	required Code code = 1;
 }
+
+message CompileRequest {
+	required string files = 1;
+}
+
+message CompileResponse {
+	required string file = 1;
+
+	// Send compilation error string or file contents
+	required string error = 2;
+	required bytes data = 3;
 }
