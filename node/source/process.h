@@ -157,10 +157,11 @@ private:
 	create_process(const char *program_name, const char **argv, const char *cwd) noexcept
 	{
 		auto cwd_ = cwd ? cwd : "./";
-		fmt::print("Creating new process: {} at {}\nargv:", program_name, cwd_);
+		fmt::print("Creating new process: {} at {} argv:", program_name, cwd_);
 		for (auto arg = argv; *arg != nullptr; ++arg) {
-			fmt::print("\t{} ", *arg);
+			fmt::print("{} ", *arg);
 		}
+		putchar('\n');
 
 		struct process_info p;
 		int new_stdin[2], new_stdout[2], new_stderr[2];

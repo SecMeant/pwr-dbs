@@ -257,8 +257,6 @@ int main(int argc, char **argv)
 		register_request.SerializeToString(&message_buffer);
 		ws.write(asio::buffer(message_buffer));
 
-
-		puts("HERE1");
 		// Registration response
 		ws.read(io_buffer);
 		RegisterNodeResponse res;
@@ -267,7 +265,6 @@ int main(int argc, char **argv)
 		if (res.code() != 0)
 			return 3;
 
-		puts("HERE2");
 		// Wait for BootstrapRequest and parse
 		ws.read(io_buffer);
 		BootstrapRequest bootstrap_request;
@@ -283,7 +280,6 @@ int main(int argc, char **argv)
 			return 2;
 		}
 
-		puts("HERE3");
 		// Wait for compilation request
 		ws.read(io_buffer);
 		CompileRequest compile_request;
@@ -292,7 +288,6 @@ int main(int argc, char **argv)
 		// HARD WORK, COMPILE
 		std::this_thread::sleep_for(1s);
 
-		puts("HERE4");
 		// Send compilation response
 		CompileResponse compile_response;
 		compile_response.set_file(compile_request.files());
@@ -300,8 +295,6 @@ int main(int argc, char **argv)
 		compile_response.set_data("\x41\x42\x43\x44");
 		compile_response.SerializeToString(&message_buffer);
 		ws.write(asio::buffer(message_buffer));
-
-		puts("HERE5");
 
 	} catch (const std::exception &e) {
 		print("Exception: {}\n", e.what());
