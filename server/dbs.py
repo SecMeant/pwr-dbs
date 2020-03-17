@@ -96,6 +96,13 @@ index = """
 </head>
 <body>
   <h1>asdf</h1>
+  <form action="/add">
+    <label for="url">URL:</label>
+    <input type="text" id="url" name="url"><br>
+    <label for="rev">Commit:</label>
+    <input type="text" id="rev" name="rev"><br>
+    <input type="submit" value="Submit">
+  </form>
 </body>
 
 """
@@ -110,6 +117,7 @@ setTimeout(checkJS, 1000);
 """
 
 save_fn = 'state'
+items = []
 
 @app.route("/")
 def root():
@@ -123,11 +131,15 @@ def favicon():
 def js():
   return indexjs
 
-@app.route("/add", defaults={'item': None})
-@app.route("/add/<item>")
-def add_item(item):
-  if (item):
-    items.append(item)
+@app.route("/add")
+def add_item():
+  global items
+  url = request.args.get('url')
+  rev = request.args.get('rev')
+  if (url):
+    item = f'{url}@{rev}'
+    if not item in items:
+      items.append(item)
   return "<h1>Items</h1></br>" + "</br>".join(items)
 
 @app.route("/clone/<repo>")
