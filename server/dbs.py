@@ -140,11 +140,15 @@ def add_item():
   if (url):
     p = ProjectInfo(url,rev)
     if not p in projects:
-      if project_init(url, rev, None):
+      if project_init(p):
         projects.append(p)
 
-  ps = [f'{p.url}@{p.rev}' for p in projects]
-  return "<h1>Projects</h1></br>" + "</br>".join(ps)
+  site = "<h1>Projects</h1></br>"
+  for p in projects:
+    site += f'{p.url}@{p.rev}</br>'
+    site += '</br>'.join(p.files)
+
+  return site
 
 @app.route("/clone/<repo>")
 def request_clone(repo):
