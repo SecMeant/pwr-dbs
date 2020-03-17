@@ -159,7 +159,7 @@ private:
 		auto cwd_ = cwd ? cwd : "./";
 		fmt::print("Creating new process: {} at {}\nargv:", program_name, cwd_);
 		for (auto arg = argv; *arg != nullptr; ++arg) {
-			fmt::print("\t{}\n", *arg);
+			fmt::print("\t{} ", *arg);
 		}
 
 		struct process_info p;
