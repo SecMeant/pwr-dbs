@@ -7,9 +7,10 @@ import threading
 import queue
 import struct
 
-from pathlib import Path
-
 import delegate_pb2
+from localstorage import *
+
+projects = projects
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
@@ -117,7 +118,6 @@ setTimeout(checkJS, 1000);
 """
 
 save_fn = 'state'
-items = []
 
 @app.route("/")
 def root():
@@ -133,20 +133,24 @@ def js():
 
 @app.route("/add")
 def add_item():
-  global items
+  global projects
   url = request.args.get('url')
   rev = request.args.get('rev')
+
   if (url):
-    item = f'{url}@{rev}'
-    if not item in items:
-      items.append(item)
-  return "<h1>Items</h1></br>" + "</br>".join(items)
+    p = ProjectInfo(url,rev)
+    if not p in projects:
+      if project_init(url, rev, None):
+        projects.append(p)
+
+  ps = [f'{p.url}@{p.rev}' for p in projects]
+  return "<h1>Projects</h1></br>" + "</br>".join(ps)
 
 @app.route("/clone/<repo>")
 def request_clone(repo):
   req = delegate_pb2.BootstrapRequest()
-  req.url = 'https://github.com/secmeant/sets'
-  req.rev = '6784848e4ed40a42b9016654330c3d0edc4bbdfc'
+  req.url = 'https://github.com/SecMeant/pwr-sdizo'
+  req.rev = 'e17d3526a4627d34764f82467484d6dc428b7b1c'
   req.opt = ''
 
   project = Project(req, ['asdf.cc'])
@@ -208,20 +212,20 @@ def handle_node_register(ws):
   return ''
 
 def restore():
-  global items
+  global projects
   print('Restoring saved data')
   try:
     with open(save_fn, 'r') as f:
-      items = f.readlines()
+      projects = f.readlines()
   except FileNotFoundError:
     print('Could not find data file.')
     return
   print('Restored')
 
 def safe_exit():
-  global items
+  global projects
   with open(save_fn, 'w') as f:
-    f.write('\n'.join(items))
+    f.write('\n'.join(projects))
 
 if __name__ == '__main__':
   try:
