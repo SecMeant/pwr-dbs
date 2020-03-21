@@ -4,3 +4,4 @@ server/*_pb2.py
 node/build
 node/compile_commands.json
 node/source/*.pb.*
+node-rs/target/*
