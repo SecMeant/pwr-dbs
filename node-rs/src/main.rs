@@ -17,6 +17,9 @@ use websocket::client::ClientBuilder;
 use websocket::dataframe::DataFrame;
 
 type Websock = websocket::sync::Client<std::net::TcpStream>;
+type BinFileData = Vec<u8>;
+type BinFileError = String;
+type CompileStatus = Result<BinFileData, BinFileError>;
 
 const ENV : &str = "/usr/bin/env";
 
@@ -112,7 +115,8 @@ fn cmake_configure_project(project_path: &PathBuf, opt: &str) -> bool {
         return false;
     }
 
-    set_current_dir(&current_path).expect("Restoring current dir failed.");
+    //TODO(holz) Old path must be resotred in case files from another project has to be compiled.
+    //set_current_dir(&current_path).expect("Restoring current dir failed.");
 
     return true;
 }
@@ -163,6 +167,22 @@ fn handle_project_init(request: BootstrapRequest) -> BootstrapResponse {
     return response;
 }
 
+fn compile(file_name: &str) -> CompileStatus {
+    let spawn_status = Command::new(ENV)
+        .arg("make")
+        .arg(file_name)
+        .status();
+
+    match spawn_status {
+        Ok(status_code) => match status_code.code().expect("Expected make to spawn properly") {
+            0 => Ok(vec![0x41,0x42,0x43,0x44]),
+            _ => Err("Failed to compile".to_string()),
+        }
+
+        Err(_) => Err("Failed to start make".to_string()),
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -191,7 +211,7 @@ fn main() {
 
     // For some reason first read is not blocking (?)
     // To restore blocking behavior simply read once and expect to fail.
-    // TODO(holz) obv check why it returns empty slice.
+    // TODO(holz) obv check why this returns empty slice.
     let d = ws.recv_dataframe().unwrap().data;
     if !d.is_empty() {
         panic!("Expected first read to fail.");
@@ -206,7 +226,30 @@ fn main() {
 
     let bootstrap_request = recv_protobuf::<BootstrapRequest>(&mut ws);
     let bootstrap_response = handle_project_init(bootstrap_request);
-    let outdata = websocket::Message::binary(register_request.write_to_bytes().unwrap());
+    let outdata = websocket::Message::binary(bootstrap_response.write_to_bytes().unwrap());
     ws.send_message(&outdata).unwrap();
 
+    let compile_request = recv_protobuf::<CompileRequest>(&mut ws);
+    let file_to_compile = compile_request.get_files();
+    println!("Got {} to compile", file_to_compile);
+
+    let mut compile_response = CompileResponse::default();
+    compile_response.set_file(file_to_compile.to_string());
+
+    match compile(file_to_compile) {
+        Ok(bin_data) => {
+            println!("Compiled {}", file_to_compile);
+            compile_response.set_error("".to_string());
+            compile_response.set_data(bin_data);
+        }
+
+        Err(error) => {
+            println!("Failed to compile {}", file_to_compile);
+            compile_response.set_data(Vec::<u8>::new());
+            compile_response.set_error(error);
+        }
+    };
+
+    let outdata = websocket::Message::binary(compile_response.write_to_bytes().unwrap());
+    ws.send_message(&outdata).unwrap();
 }
