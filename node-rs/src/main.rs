@@ -202,7 +202,7 @@ fn compile(file_name: &str) -> CompileStatus {
         return Err("Failed ... path".to_string());
     }
 
-    let mut output_file = String::from(from_utf8(output_path).unwrap());
+    let output_file = String::from(from_utf8(output_path).unwrap());
     let mut file = File::open(output_file).expect("");
     //match file {
     //    Ok(_) => { } // skip
@@ -259,32 +259,41 @@ fn main() {
         _ => { panic!("Node registration failed"); }
     }
 
-    let bootstrap_request = recv_protobuf::<BootstrapRequest>(&mut ws);
-    let bootstrap_response = handle_project_init(bootstrap_request);
-    let outdata = websocket::Message::binary(bootstrap_response.write_to_bytes().unwrap());
-    ws.send_message(&outdata).unwrap();
+    loop {
+        let bootstrap_request = recv_protobuf::<BootstrapRequest>(&mut ws);
+        let bootstrap_response = handle_project_init(bootstrap_request);
+        let outdata = websocket::Message::binary(bootstrap_response.write_to_bytes().unwrap());;
+        ws.send_message(&outdata).unwrap();
 
-    let compile_request = recv_protobuf::<CompileRequest>(&mut ws);
-    let file_to_compile = compile_request.get_files();
-    println!("Got {} to compile", file_to_compile);
+        loop {
+            let compile_request = recv_protobuf::<CompileRequest>(&mut ws);
+            let file_to_compile = compile_request.get_files();
 
-    let mut compile_response = CompileResponse::default();
-    compile_response.set_file(file_to_compile.to_string());
+            println!("Got {} to compile", file_to_compile);
 
-    match compile(file_to_compile) {
-        Ok(bin_data) => {
-            println!("Compiled {}", file_to_compile);
-            compile_response.set_error("".to_string());
-            compile_response.set_data(bin_data);
+            if file_to_compile == "stop" {
+                break;
+            }
+
+            let mut compile_response = CompileResponse::default();
+            compile_response.set_file(file_to_compile.to_string());
+
+            match compile(file_to_compile) {
+                Ok(bin_data) => {
+                    println!("Compiled {}", file_to_compile);
+                    compile_response.set_error("".to_string());
+                    compile_response.set_data(bin_data);
+                }
+
+                Err(error) => {
+                    println!("Failed to compile {}", file_to_compile);
+                    compile_response.set_data(Vec::<u8>::new());
+                    compile_response.set_error(error);
+                }
+            };
+
+            let outdata = websocket::Message::binary(compile_response.write_to_bytes().unwrap());
+            ws.send_message(&outdata).unwrap();
         }
-
-        Err(error) => {
-            println!("Failed to compile {}", file_to_compile);
-            compile_response.set_data(Vec::<u8>::new());
-            compile_response.set_error(error);
-        }
-    };
-
-    let outdata = websocket::Message::binary(compile_response.write_to_bytes().unwrap());
-    ws.send_message(&outdata).unwrap();
+    }
 }

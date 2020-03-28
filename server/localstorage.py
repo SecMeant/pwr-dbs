@@ -2,10 +2,14 @@ import subprocess
 import os
 import json
 
+# Used to implement conv ProjectInfo -> protobf.
+# Perhaps shouldnt be here.
+import delegate_pb2
+
 projects = []
 
 class ProjectInfo:
-  def __init__(self, url, rev, opt = None):
+  def __init__(self, url, rev, opt = ''):
     self.url = url
     self.rev = rev
     self.opt = opt
@@ -16,6 +20,15 @@ class ProjectInfo:
 
   def __ne__(self, other):
     return not self.__ne__(other)
+
+  # Perhaps shpuld be implemented somewhere else
+  def to_protobf(self):
+    req = delegate_pb2.BootstrapRequest()
+    req.url = self.url
+    req.rev = self.rev
+    req.opt = self.opt
+
+    return req
 
 def repo_ready(repo_dir):
   return os.path.isdir(repo_dir)
@@ -81,6 +94,15 @@ def repo_outdir(repo_name, rev):
 def read_file(path):
   return open(path, 'r').read()
 
+def remove_prefix(src, prefix):
+  print(f"remove prefix {src} {prefix}")
+  if src.startswith(prefix):
+      return src[len(prefix):]
+  return src
+
+def extract_targets(compile_commands, prefix):
+  return [remove_prefix(entry['file'], prefix) if prefix else entry['file'] for entry in compile_commands]
+
 def project_init(project):
   url = project.url
   rev = project.rev
@@ -96,7 +118,9 @@ def project_init(project):
     return False
 
   compile_commands = json.loads(read_file(os.path.join(outdir, 'build', 'compile_commands.json')))
-  files = [entry['file'] for entry in compile_commands]
+  prefix = os.path.join(os.getcwd(), outdir, '')
+  files = extract_targets(compile_commands, prefix)
+  print(files)
   project.files = files
 
   return True
