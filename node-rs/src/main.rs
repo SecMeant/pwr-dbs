@@ -11,10 +11,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::fs::metadata;
 use std::fs::create_dir_all;
+use std::fs::File;
 use std::process::Command;
 
+use std::str::from_utf8;
+
+use std::io::prelude::*;
+
 use websocket::client::ClientBuilder;
-use websocket::dataframe::DataFrame;
 
 type Websock = websocket::sync::Client<std::net::TcpStream>;
 type BinFileData = Vec<u8>;
@@ -92,12 +96,9 @@ fn cmake_configure_project(project_path: &PathBuf, opt: &str) -> bool {
     let current_path = current_dir().unwrap();
     let build_path = project_path.clone().join("build");
 
-    match create_dir_all(&build_path) {
-        Err(_) => {
-            println!("Failed to create directory");
-            return false;
-        }
-        Ok(_) => ()
+    if let Err(_) = create_dir_all(&build_path) {
+        println!("Failed to create directory");
+        return false;
     }
 
     set_current_dir(&build_path).expect("Changing dir failed.");
@@ -130,7 +131,6 @@ fn handle_project_init(request: BootstrapRequest) -> BootstrapResponse {
 
     let name_begin = url.rfind("/");
 
-    // Cant make it work with match syntax
     if name_begin == None {
         response.set_code(BootstrapResponse_Code::EURL);
         return response;
@@ -167,20 +167,55 @@ fn handle_project_init(request: BootstrapRequest) -> BootstrapResponse {
     return response;
 }
 
+// ASSUME: output contains proper output from make VERBOSE=1. Status of make should be checked
+// before call to this function.
+fn get_output_path_after_compile_(output: &Vec<u8>) -> &[u8] {
+    const SPACE : char = ' ';
+    let mut lines = output.lines();
+    let line = lines.next().unwrap().unwrap();
+    let start_index = line.rfind(|c| c == SPACE).unwrap();
+    let output_path = &output[start_index+1..line.len()];
+    return output_path;
+}
+
 fn compile(file_name: &str) -> CompileStatus {
     let spawn_status = Command::new(ENV)
         .arg("make")
+        .arg("VERBOSE=1")
         .arg(file_name)
-        .status();
+        .output();
 
-    match spawn_status {
-        Ok(status_code) => match status_code.code().expect("Expected make to spawn properly") {
-            0 => Ok(vec![0x41,0x42,0x43,0x44]),
-            _ => Err("Failed to compile".to_string()),
-        }
+    if let Err(_) = spawn_status {
+        return Err("Failed to start make".to_string());
+    };
 
-        Err(_) => Err("Failed to start make".to_string()),
+    let output = spawn_status.unwrap();
+
+    if !output.status.success() {
+        return Err("Failed to compile".to_string());
     }
+
+    let output_path = get_output_path_after_compile_(&output.stdout);
+    if let Ok(s) = from_utf8(output_path) {
+        println!("Got file path {}", s);
+    } else {
+        return Err("Failed ... path".to_string());
+    }
+
+    let mut output_file = String::from(from_utf8(output_path).unwrap());
+    let mut file = File::open(output_file).expect("");
+    //match file {
+    //    Ok(_) => { } // skip
+    //    Err(_) => { return Err("Failed to open just compiled file".to_string()); }
+    //}
+
+    //let mut file = file.unwrap();
+    let mut obj = Vec::new();
+    if let Err(_) = file.read_to_end(&mut obj) {
+        return Err("Failed to read just opened file.".to_string());
+    }
+
+    Ok(obj)
 }
 
 fn main() {
