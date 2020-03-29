@@ -196,7 +196,8 @@ def request_clone(repo):
     workers_lock.release()
     return 'No workers available'
 
-  workers[0].assign_work(project)
+  for worker in workers:
+    worker.assign_work(project)
 
   workers_lock.release()
 
