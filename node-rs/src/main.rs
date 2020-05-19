@@ -262,7 +262,7 @@ fn main() {
     loop {
         let bootstrap_request = recv_protobuf::<BootstrapRequest>(&mut ws);
         let bootstrap_response = handle_project_init(bootstrap_request);
-        let outdata = websocket::Message::binary(bootstrap_response.write_to_bytes().unwrap());;
+        let outdata = websocket::Message::binary(bootstrap_response.write_to_bytes().unwrap());
         ws.send_message(&outdata).unwrap();
 
         loop {
