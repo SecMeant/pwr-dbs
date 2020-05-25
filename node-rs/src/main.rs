@@ -268,6 +268,11 @@ fn main() {
             let compile_request = recv_protobuf::<CompileRequest>(&mut ws);
             let file_to_compile = compile_request.get_files();
 
+            // It was last file, return to waiting for new project bootstrap
+            if file_to_compile.is_empty() {
+                break;
+            }
+
             println!("Got {} to compile", file_to_compile);
 
             if file_to_compile == "stop" {
