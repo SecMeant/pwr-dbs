@@ -40,7 +40,7 @@ class Project:
     self.lock = threading.Lock()
     self.bootstrap_info = binfo
     self.files = files
-    self.objects = []
+    self.objects = {}
 
   def get_file(self):
     self.lock.acquire()
@@ -54,9 +54,14 @@ class Project:
 
     return ret
 
-  def add_object(self, obj):
+  def put_file(self, filename):
     self.lock.acquire()
-    self.objects.append(obj)
+    self.files.insert(0, filename)
+    self.lock.release()
+
+  def add_object(self, filename, obj):
+    self.lock.acquire()
+    self.objects[filename] = obj
     self.lock.release()
 
 class ProjectQueue:
@@ -252,8 +257,13 @@ def handle_node_register(ws):
         resp = delegate_pb2.CompileResponse()
         msg = ws_read_any(ws)
         resp.ParseFromString(msg)
-        print(f'msg: {msg}, File: {resp.file}, error: {resp.error}, data: {resp.data}\n')
-        project.add_object(resp.data)
+        print(f'File: {resp.file}, error: {resp.error}, data: {resp.data}\n')
+
+        if len(resp.data) == 0:
+          print(f'Failed to compile {resp.file} with error: {resp.error}.')
+          project.put_file(file)
+        else:
+          project.add_object(resp.file, resp.data)
 
 def restore():
   global projects
