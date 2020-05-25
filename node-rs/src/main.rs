@@ -33,7 +33,6 @@ fn usage(program_name: &String) {
 
 fn recv_protobuf<T : Message>(ws: &mut Websock) -> T {
     let mut dataframe = ws.recv_dataframe().unwrap();
-
     while dataframe.data.is_empty() {
         dataframe = ws.recv_dataframe().unwrap();
     }
@@ -192,7 +191,7 @@ fn compile(file_name: &str) -> CompileStatus {
     let output = spawn_status.unwrap();
 
     if !output.status.success() {
-        return Err("Failed to compile".to_string());
+        return Err(String::from_utf8(output.stderr).unwrap());
     }
 
     let output_path = get_output_path_after_compile_(&output.stdout);
