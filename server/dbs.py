@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from flask import Flask, request, send_from_directory
+from flask import Flask, request, redirect, url_for, send_from_directory
 from flask_uwsgi_websocket import GeventWebSocket
 
 import sys
@@ -10,7 +10,7 @@ import struct
 import time
 
 import delegate_pb2
-from localstorage import *
+import localstorage
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
@@ -62,16 +62,6 @@ class Project:
   def add_object(self, filename, obj):
     self.lock.acquire()
     self.objects[filename] = obj
-    self.lock.release()
-
-class ProjectQueue:
-  def __init__(self):
-    self.lock = threading.Lock()
-    self.projects = []
-
-  def enqueue_project(project):
-    self.lock.acquire()
-    self.projects.append(project)
     self.lock.release()
 
 workers_lock = threading.Lock()
@@ -155,21 +145,21 @@ def html_gen_button(text, url, fields = {}):
 
 @app.route("/add")
 def add_item():
-  global projects
   url = request.args.get('url')
   rev = request.args.get('rev')
 
   if (url):
-    p = ProjectInfo(url,rev)
-    if not p in projects:
-      if project_init(p):
-        projects.append(p)
+    p = localstorage.ProjectInfo(url,rev)
+    if not p in localstorage.projects:
+      if localstorage.project_init(p):
+        localstorage.projects.append(p)
 
   site = '<h1>Projects</h1><h4><a href="/">/</a></h4>'
-  for p in projects:
+  for p in localstorage.projects:
     site += f'{p.url}@{p.rev}</br>'
     site += '</br>'.join(p.files)
     site += html_gen_button('Clone', '/clone/', {'url':f'{url}'})
+    site += html_gen_button('Remove', '/remove/', {'url':f'{url}'})
     site += '</br>'*3
 
   return site
@@ -177,15 +167,13 @@ def add_item():
 @app.route("/clone/<repo>")
 @app.route("/clone/", defaults={'repo':''})
 def request_clone(repo):
-  global projects
-
   if not repo:
     repo = request.args.get('url')
 
   pinfo = None
 
   if repo:
-    for p in projects:
+    for p in localstorage.projects:
       if p.url.endswith(repo):
         pinfo = p
         break
@@ -208,6 +196,26 @@ def request_clone(repo):
 
   return 'Work started'
 
+@app.route("/remove/<repo>")
+@app.route("/remove/", defaults={'repo':''})
+def request_remove(repo):
+  if not repo:
+    repo = request.args.get('url')
+
+  print('removing repo')
+  if repo.startswith('https://') or repo.startswith('git://'):
+    print('full url repo')
+    for p in localstorage.projects:
+      if p.url == repo:
+        localstorage.projects.remove(p)
+  else:
+    print('short name repo')
+    repo = '/' + repo
+    for p in localstorage.projects:
+      if p.url.endswith(repo):
+        localstorage.projects.remove(p)
+  return redirect('/add')
+
 @websocket.route('/ws')
 def handle_node_register(ws):
   req = delegate_pb2.RegisterNodeRequest()
@@ -221,6 +229,7 @@ def handle_node_register(ws):
 
   with Worker() as this_worker:
     while True:
+      print(f'Worker@{id(this_worker):x} is waiting for project...')
       project = this_worker.wait_for_work()
 
       req = project.bootstrap_info
@@ -241,9 +250,11 @@ def handle_node_register(ws):
         # Project is done.
         if not file:
           print('No more files to compile for the project, going back to waiting for project')
+          compile_request = delegate_pb2.CompileRequest()
+          compile_request.files = ''
+          ws.send(compile_request.SerializeToString())
           break
 
-        # TODO this is slow
         if not file.endswith('.o'):
           file += '.o'
 
@@ -265,28 +276,12 @@ def handle_node_register(ws):
         else:
           project.add_object(resp.file, resp.data)
 
-def restore():
-  global projects
-  print('Restoring saved data')
-  try:
-    with open(save_fn, 'r') as f:
-      projects = f.readlines()
-  except FileNotFoundError:
-    print('Could not find data file.')
-    return
-  print('Restored')
-
-def safe_exit():
-  global projects
-  with open(save_fn, 'w') as f:
-    f.write('\n'.join(projects))
-
 if __name__ == '__main__':
   try:
-    #restore()
+    localstorage.load_from_file(save_fn)
     app.run(gevent=100)
     #http_server = WSGIServer(('localhost', 5000), app, handler_class=WebSocketHandler)
     #http_server.serve_forever()
   except KeyboardInterrupt:
-    #safe_exit()
+    localstorage.save_to_file(save_fn)
     sys.exit()

@@ -125,4 +125,23 @@ def project_init(project):
 
   return True
 
+def save_to_file(filename):
+  print('Saving to file')
+  with open(filename, 'w') as f:
+    for p in projects:
+      pickle.dump(p, f)
+
+def load_from_file(filename):
+  try:
+    f = open(filename, 'r')
+  except FileNotFoundError as e:
+    print('Could not find data file.')
+    return
+
+  try:
+    while 1:
+      projects.append(pickle.load(f))
+  except EOFError as e:
+    print(f'Restored {len(projects)} projects')
+
 
