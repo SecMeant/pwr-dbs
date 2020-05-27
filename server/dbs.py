@@ -79,14 +79,6 @@ def root():
 def favicon():
   return send_from_directory(app.root_path, 'dbs.ico', mimetype='image/vnd.microsoft.icon')
 
-def html_gen_button(text, url, fields = {}):
-  button = f'<form method="get" action="{url}">'
-  for field in fields:
-    button += f'<input type="hidden" name="{field}" value="{fields[field]}">'
-  button += f'<button type="submit">{text}</button></form>'
-
-  return button
-
 @app.route("/add")
 def add_item():
   url = request.args.get('url')
