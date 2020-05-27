@@ -1,6 +1,7 @@
 import subprocess
 import os
 import json
+import threading
 
 # Used to implement conv ProjectInfo -> protobf.
 # Perhaps shouldnt be here.
@@ -8,18 +9,45 @@ import delegate_pb2
 
 projects = []
 
+class ProjectBuild:
+  def __init__(self, binfo, files):
+    self.lock = threading.Lock()
+    self.bootstrap_info = binfo
+    self.file_queue = files
+    self.objects = {}
+
+  def dequeue_file(self):
+    self.lock.acquire()
+
+    if self.file_queue:
+      ret = self.file_queue.pop()
+    else:
+      ret = None
+
+    self.lock.release()
+
+    return ret
+
+  def enqueue_file(self, filename):
+    self.lock.acquire()
+    self.file_queue.insert(0, filename)
+    self.lock.release()
+
+  def add_object(self, filename, obj):
+    self.lock.acquire()
+    self.objects[filename] = obj
+    self.lock.release()
+
 class ProjectInfo:
   def __init__(self, url, rev, opt = ''):
     self.url = url
     self.rev = rev
     self.opt = opt
-    self.files = []
 
-  def __eq__(self, other):
-    return self.url == other.url and self.rev == other.rev
+    # Clones project and fills self.files
+    project_init(self)
 
-  def __ne__(self, other):
-    return not self.__ne__(other)
+    self.buildinfo = ProjectBuild(self.to_protobf(), self.files[:])
 
   # Perhaps shpuld be implemented somewhere else
   def to_protobf(self):

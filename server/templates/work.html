@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<style>
+#myProgress {
+  width: 50%;
+  background-color: #ddd;
+}
+
+#myBar {
+  width: 0%;
+  height: 30px;
+  background-color: #4CAF50;
+}
+</style>
+<body>
+
+<h1>Building {{ project_name }}</h1>
+
+<div id="myProgress">
+  <div id="myBar"></div>
+</div>
+
+<br>
+
+<script>
+function update_status() {
+  var bar = document.getElementById("myBar");
+  var req = new XMLHttpRequest();
+
+  req.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      var status = this.responseText.split(' ')
+      width = parseInt(status[0]) / parseInt(status[1]) * 100;
+      bar.style.width = width + '%';
+    }
+  };
+
+  req.open("GET", "/status/?url={{ project_name|quote_plus }}", false);
+  req.send();
+}
+
+setInterval(update_status, 250);
+</script>
+
+</body>
+</html>

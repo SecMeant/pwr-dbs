@@ -12,7 +12,10 @@ import time
 import delegate_pb2
 import localstorage
 
+from urllib.parse import quote_plus
+
 app = Flask(__name__, template_folder='templates')
+app.jinja_env.filters['quote_plus'] = lambda u: quote_plus(u)
 app.config['SECRET_KEY'] = 'secret!'
 websocket = GeventWebSocket(app)
 
@@ -34,35 +37,6 @@ class Worker:
 
   def assign_work(self, project):
     self.work_queue.put(project)
-
-class Project:
-  def __init__(self, binfo, files):
-    self.lock = threading.Lock()
-    self.bootstrap_info = binfo
-    self.files = files
-    self.objects = {}
-
-  def get_file(self):
-    self.lock.acquire()
-
-    if self.files:
-      ret = self.files.pop()
-    else:
-      ret = None
-
-    self.lock.release()
-
-    return ret
-
-  def put_file(self, filename):
-    self.lock.acquire()
-    self.files.insert(0, filename)
-    self.lock.release()
-
-  def add_object(self, filename, obj):
-    self.lock.acquire()
-    self.objects[filename] = obj
-    self.lock.release()
 
 workers_lock = threading.Lock()
 workers = []
@@ -119,31 +93,22 @@ def add_item():
   rev = request.args.get('rev')
 
   if (url):
-    p = localstorage.ProjectInfo(url,rev)
-    if not p in localstorage.projects:
-      if localstorage.project_init(p):
-        localstorage.projects.append(p)
+    repo = find_repo(url, rev)
+    if repo == None:
+      localstorage.projects.append(localstorage.ProjectInfo(url,rev))
 
   return render_template('add.html', projects=localstorage.projects)
 
-@app.route("/clone/<repo>")
-@app.route("/clone/", defaults={'repo':''})
-def request_clone(repo):
-  if not repo:
-    repo = request.args.get('url')
+@app.route("/clone/<url>")
+@app.route("/clone/", defaults={'url':''})
+def request_clone(url):
+  if not url:
+    url = request.args.get('url')
 
-  pinfo = None
-
-  if repo:
-    for p in localstorage.projects:
-      if p.url.endswith(repo):
-        pinfo = p
-        break
+  pinfo = find_repo(url)
 
   if pinfo is None:
     return render_template('centertext.html', text='404 Not found')
-
-  project = Project(pinfo.to_protobf(), pinfo.files)
 
   workers_lock.acquire()
 
@@ -152,30 +117,49 @@ def request_clone(repo):
     return render_template('centertext.html', text='No workers available')
 
   for worker in workers:
-    worker.assign_work(project)
+    worker.assign_work(pinfo.buildinfo)
 
   workers_lock.release()
 
-  return render_template('centertext.html', text='Work started')
+  return render_template('work.html', project_name=pinfo.url)
 
-@app.route("/remove/<repo>")
-@app.route("/remove/", defaults={'repo':''})
-def request_remove(repo):
-  if not repo:
-    repo = request.args.get('url')
-
-  print('removing repo')
-  if repo.startswith('https://') or repo.startswith('git://'):
-    print('full url repo')
+def find_repo(url, rev=None):
+  if url.startswith('https://') or url.startswith('git://'):
     for p in localstorage.projects:
-      if p.url == repo:
-        localstorage.projects.remove(p)
+      if p.url == url:
+        if rev == None or rev == p.rev:
+          return p
   else:
-    print('short name repo')
-    repo = '/' + repo
+    url = '/' + url
     for p in localstorage.projects:
-      if p.url.endswith(repo):
-        localstorage.projects.remove(p)
+      if p.url.endswith(url):
+        if rev == None or rev == p.rev:
+          return p
+
+  return None
+
+@app.route("/status/<url>")
+@app.route("/status/", defaults={'url':''})
+def request_status(url):
+  if not url:
+    url = request.args.get('url')
+
+  p = find_repo(url)
+  if not p:
+    return ''
+
+  return f'{len(p.buildinfo.objects)} {len(p.files)}'
+
+@app.route("/remove/<url>")
+@app.route("/remove/", defaults={'url':''})
+def request_remove(url):
+  if not url:
+    url = request.args.get('url')
+
+  p = find_repo(url)
+  if p:
+    localstorage.projects.remove(p)
+
   return redirect('/add')
 
 @websocket.route('/ws')
@@ -207,7 +191,7 @@ def handle_node_register(ws):
         continue
 
       while True:
-        file = project.get_file()
+        file = project.dequeue_file()
 
         # Project is done.
         if not file:
@@ -234,7 +218,7 @@ def handle_node_register(ws):
 
         if len(resp.data) == 0:
           print(f'Failed to compile {resp.file} with error: {resp.error}.')
-          project.put_file(file)
+          project.enqueue_file(file)
         else:
           project.add_object(resp.file, resp.data)
 
