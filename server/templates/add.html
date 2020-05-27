@@ -1,0 +1,24 @@
+<h1>Projects</h1>
+<h4><a href="/">/</a></h4>
+
+{% for project in projects %}
+
+  {{ project.url }}@{{ project.rev }}</br>
+
+  {% for file in project.files %}
+    {{ file }}</br>
+  {% endfor %}
+
+  <form method="get" action="/clone/">
+    <input type="hidden" name="url" value="{{ project.url }}">
+    <button type="submit">Clone</button>
+  </form>
+
+  <form method="get" action="/remove/">
+    <input type="hidden" name="url" value="{{ project.url }}">
+    <button type="submit">Remove</button>
+  </form>
+
+  </br></br></br>
+
+{% endfor %}

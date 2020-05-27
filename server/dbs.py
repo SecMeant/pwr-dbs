@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from flask import Flask, request, redirect, url_for, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory
 from flask_uwsgi_websocket import GeventWebSocket
 
 import sys
@@ -12,7 +12,7 @@ import time
 import delegate_pb2
 import localstorage
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
 app.config['SECRET_KEY'] = 'secret!'
 websocket = GeventWebSocket(app)
 
@@ -95,45 +95,15 @@ def ws_recv_protobuf(ws):
   size = struct.unpack("<I", ws_read_n(ws, 4))
   return ws_read_n(ws, size)
 
-index = """
-<head>
-  <script type="text/javascript" src="index.js"></script>
-</head>
-<body>
-  <h1>asdf</h1>
-  <form action="/add">
-    <label for="url">URL:</label>
-    <input type="text" id="url" name="url", value="https://github.com/secmeant/pwr-sdizo"><br>
-    <label for="rev">Commit:</label>
-    <input type="text" id="rev" name="rev" value="e17d3526a4627d34764f82467484d6dc428b7b1c"><br>
-    <input type="submit" value="Submit">
-  </form>
-</body>
-
-"""
-
-indexjs = """
-function checkJS() {
-  document.body.innerHTML = document.body.innerHTML + "</br>JS works</br>";
-}
-
-setTimeout(checkJS, 1000);
-
-"""
-
 save_fn = 'state'
 
 @app.route("/")
 def root():
-  return index
+  return render_template('index.html', url='https://github.com/secmeant/pwr-sdizo', rev='e17d3526a4627d34764f82467484d6dc428b7b1c')
 
 @app.route("/favicon.ico")
 def favicon():
   return send_from_directory(app.root_path, 'dbs.ico', mimetype='image/vnd.microsoft.icon')
-
-@app.route("/index.js")
-def js():
-  return indexjs
 
 def html_gen_button(text, url, fields = {}):
   button = f'<form method="get" action="{url}">'
@@ -154,15 +124,7 @@ def add_item():
       if localstorage.project_init(p):
         localstorage.projects.append(p)
 
-  site = '<h1>Projects</h1><h4><a href="/">/</a></h4>'
-  for p in localstorage.projects:
-    site += f'{p.url}@{p.rev}</br>'
-    site += '</br>'.join(p.files)
-    site += html_gen_button('Clone', '/clone/', {'url':f'{url}'})
-    site += html_gen_button('Remove', '/remove/', {'url':f'{url}'})
-    site += '</br>'*3
-
-  return site
+  return render_template('add.html', projects=localstorage.projects)
 
 @app.route("/clone/<repo>")
 @app.route("/clone/", defaults={'repo':''})
@@ -179,7 +141,7 @@ def request_clone(repo):
         break
 
   if pinfo is None:
-    return 'No such project'
+    return render_template('centertext.html', text='404 Not found')
 
   project = Project(pinfo.to_protobf(), pinfo.files)
 
@@ -187,14 +149,14 @@ def request_clone(repo):
 
   if not workers:
     workers_lock.release()
-    return 'No workers available'
+    return render_template('centertext.html', text='No workers available')
 
   for worker in workers:
     worker.assign_work(project)
 
   workers_lock.release()
 
-  return 'Work started'
+  return render_template('centertext.html', text='Work started')
 
 @app.route("/remove/<repo>")
 @app.route("/remove/", defaults={'repo':''})
